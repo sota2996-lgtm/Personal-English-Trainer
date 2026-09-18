@@ -1014,12 +1014,16 @@
         }
     }
 
+    function executeInterrupt() {
+        closeModal('modal-interrupt');
+        navigate('home');
+    }
+
     function confirmInterrupt() {
         document.getElementById('modal-interrupt').classList.add('active');
         document.getElementById('modal-interrupt-msg').innerHTML = "現在のセッションを中断してホームに戻りますか？<br>(未回答分は保存されません)";
         document.getElementById('modal-interrupt-ok-btn').onclick = () => {
-            closeModal('modal-interrupt');
-            navigate('home');
+            executeInterrupt();
         };
     }
 
@@ -1456,11 +1460,16 @@
                 if (!item.week) return;
                 const newItem = {
                     id: 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-                    week: parseInt(item.week), type: item.type === 'PHRASE' ? 'PHRASE' : 'VOCABULARY',
-                    word: item.word || '', japanese: item.japanese || '',
-                    phrase: item.phrase || '', phraseJapanese: item.phraseJapanese || '',
-                    example: item.example || '', exampleJapanese: item.exampleJapanese || '',
-                    category: item.category || 'OTHER', priority: ['A','B','C'].includes(item.priority) ? item.priority : 'C',
+                    week: parseInt(item.week), 
+                    type: item.type === 'PHRASE' ? 'PHRASE' : 'VOCABULARY',
+                    word: item.word || item.vocabulary || '', 
+                    japanese: item.japanese || '',
+                    phrase: item.phrase || '', 
+                    phraseJapanese: item.phraseJapanese || item.phrase_japanese || item.phrase_jp || '',
+                    example: item.example || '', 
+                    exampleJapanese: item.exampleJapanese || item.example_japanese || '',
+                    category: item.category || 'OTHER', 
+                    priority: ['A','B','C'].includes(item.priority) ? item.priority : 'C',
                     status: 'NEW', createdDate: now, lastReviewed: null, nextReview: null,
                     correctCount: 0, wrongCount: 0, okCount: 0, streak: 0,
                     // V2 Fields
