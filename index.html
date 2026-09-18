@@ -633,8 +633,8 @@
 
     // Default Sample Data (Bootstrapped for empty states)
     const SAMPLE_DATA = [
-        { id: 's1', week: 1, type: 'VOCABULARY', word: 'confirm', japanese: '確認する', phrase: "I'd like to (____) the delivery date.", phraseJapanese: '配送日を確認したいです。', example: '', exampleJapanese: '', category: 'WORK', priority: 'A', status: 'NEW', createdDate: Date.now(), lastReviewed: null, nextReview: null, correctCount: 0, wrongCount: 0, okCount: 0, streak: 0 },
-        { id: 's2', week: 1, type: 'VOCABULARY', word: 'bring forward', japanese: '前倒しする', phrase: 'Could we (____) the meeting?', phraseJapanese: '会議を前倒しできますか？', example: '', exampleJapanese: '', category: 'WORK', priority: 'A', status: 'NEW', createdDate: Date.now(), lastReviewed: null, nextReview: null, correctCount: 0, wrongCount: 0, okCount: 0, streak: 0 },
+        { id: 's1', week: 1, type: 'VOCABULARY', word: 'confirm', japanese: '確認する', phrase: "I'd like to confirm the delivery date.", phraseJapanese: '配送日を確認したいです。', example: '', exampleJapanese: '', category: 'WORK', priority: 'A', status: 'NEW', createdDate: Date.now(), lastReviewed: null, nextReview: null, correctCount: 0, wrongCount: 0, okCount: 0, streak: 0 },
+        { id: 's2', week: 1, type: 'VOCABULARY', word: 'bring forward', japanese: '前倒しする', phrase: 'Could we bring the delivery forward to Friday?', phraseJapanese: '会議を前倒しできますか？', example: '', exampleJapanese: '', category: 'WORK', priority: 'A', status: 'NEW', createdDate: Date.now(), lastReviewed: null, nextReview: null, correctCount: 0, wrongCount: 0, okCount: 0, streak: 0 },
         { id: 's3', week: 1, type: 'PHRASE', word: '', japanese: '念のため確認したいのですが', phrase: 'I just wanted to double-check.', phraseJapanese: '念のため確認したいのですが', example: '', exampleJapanese: '', category: 'WORK', priority: 'B', status: 'NEW', createdDate: Date.now(), lastReviewed: null, nextReview: null, correctCount: 0, wrongCount: 0, okCount: 0, streak: 0 }
     ];
 
@@ -742,7 +742,6 @@
     }
 
     function isRoleplayWeak(item) {
-        // COULDN'T USE recently, or multiple difficulties without recovery
         if (item.lastRoleplayResult === 'FAILED') return true;
         if (item.roleplayDifficultyCount >= 2 && item.lastRoleplayResult !== 'NATURAL') return true;
         if (item.status === 'MASTERED' && item.lastRoleplayResult === 'FAILED') return true;
@@ -776,7 +775,7 @@
         }
     }
 
-    // --- Quiz Study Generators (V1 + V2 integrations) ---
+    // --- Quiz Study Generators ---
     function startStudySession(mode, params = null) {
         currentSession.mode = mode;
         currentSession.queue = [];
@@ -805,12 +804,10 @@
             let candidates = db.filter(i => i.status !== 'NEW');
             candidates.sort((a, b) => {
                 let scoreA = 0; let scoreB = 0;
-                // RP impacts V2
                 if (a.lastRoleplayResult === 'FAILED') scoreA -= 200;
                 if (b.lastRoleplayResult === 'FAILED') scoreB -= 200;
                 if (isRoleplayWeak(a)) scoreA -= 150;
                 if (isRoleplayWeak(b)) scoreB -= 150;
-                // Quiz impacts V1
                 if (a.wrongCount > 0 && (Date.now() - (a.lastReviewed||0) < MS_PER_DAY)) scoreA -= 100;
                 if (b.wrongCount > 0 && (Date.now() - (b.lastReviewed||0) < MS_PER_DAY)) scoreB -= 100;
                 scoreA -= a.wrongCount * 10;
@@ -819,7 +816,7 @@
                 if (isDue(b)) scoreB -= 50;
                 if (a.priority === 'A') scoreA -= 20;
                 if (b.priority === 'A') scoreB -= 20;
-                return scoreA - scoreB; // Ascending (most negative first)
+                return scoreA - scoreB;
             });
             pool = candidates.slice(0, 5);
         } else if (mode === 'WEAK_ONLY') {
@@ -847,15 +844,57 @@
     }
 
     // --- Format Quiz Text ---
+
+    // Safely escapes a string to be used as a literal in a regex
+    function escapeRegExp(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
+    }
+
+    // New logic for target word masking in phrases
+    function maskTargetInPhrase(phrase, targetWord) {
+        if (!phrase || !targetWord) return null;
+
+        // Escape the target word to be safe in a regex
+        const escapedTarget = escapeRegExp(targetWord);
+
+        // Build a regex that matches the exact target string, 
+        // with word boundaries (\b) to prevent partial matching (e.g. 'in' inside 'information').
+        // The 'i' flag makes it case-insensitive.
+        const regex = new RegExp(`\\b${escapedTarget}\\b`, 'i');
+
+        // Check if the target word actually exists as a discrete word in the phrase
+        if (regex.test(phrase)) {
+            // If found, replace ONLY the exact match with the blank placeholder
+            return phrase.replace(regex, '(____)');
+        }
+        
+        // If the word doesn't match with word boundaries, it might be an edge case
+        // (like a phrasal verb where the spacing is weird, or punctuation is attached).
+        // Let's do a fallback check without boundaries just in case it was a multi-word expression 
+        // containing punctuation, but we still try to avoid partial-word matches if possible.
+        // For simplicity and safety against scrambling, if the exact boundary match fails, 
+        // we return null to trigger the "Not found" error rather than making a bad guess.
+        return null;
+    }
+
     function formatTargetWord(word, fullPhrase) {
         if (!fullPhrase || !word) return word.toLowerCase();
-        const match = fullPhrase.match(/\(____\)/);
-        if (match && match.index === 0) return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        return word.toLowerCase();
+        
+        // Look for the target word in the phrase (case-insensitive)
+        const escapedWord = escapeRegExp(word);
+        const regex = new RegExp(`\\b${escapedWord}\\b`, 'i');
+        const match = fullPhrase.match(regex);
+        
+        if (match) {
+            // Return exactly how it appeared in the original text (preserving case)
+            return match[0];
+        }
+        
+        // Fallback
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     }
 
     function generateQuestionText(item, mode) {
-        // V2 RP Prep mode overrides to JP -> EN Active Recall
         if (mode === 'RP_PREP') {
             const jpText = item.type === 'PHRASE' ? item.phraseJapanese : (item.phraseJapanese || item.japanese);
             const targetText = item.type === 'PHRASE' ? item.phrase : (item.phrase || item.word);
@@ -868,7 +907,6 @@
             };
         }
 
-        // V1 Standard
         if (item.type === 'PHRASE') {
             return {
                 mainJp: item.phraseJapanese,
@@ -879,9 +917,22 @@
             };
         } else {
             if (item.phrase) {
-                const regex = new RegExp(`\\b${item.word}\\b`, 'gi');
-                let masked = item.phrase.replace(regex, '(____)');
-                if(masked === item.phrase) masked = `(____) : ${item.phrase}`;
+                // VOCABULARY with a phrase: Mask exactly the target word
+                let masked = maskTargetInPhrase(item.phrase, item.word);
+                
+                if (masked === null) {
+                    // Target word wasn't found as a distinct word in the phrase
+                    return {
+                        mainJp: item.japanese,
+                        hint: item.phraseJapanese || "Complete the sentence",
+                        targetDisplay: "【エラー】この問題データでは対象単語がフレーズ内に見つかりません。",
+                        targetReveal: item.word,
+                        fullDisplayHide: false,
+                        fullPhrase: item.phrase,
+                        isError: true
+                    };
+                }
+
                 return {
                     mainJp: item.japanese,
                     hint: item.phraseJapanese || "Complete the sentence",
@@ -925,17 +976,26 @@
         const qData = generateQuestionText(item, currentSession.mode);
         document.getElementById('q-japanese').innerText = qData.mainJp;
         document.getElementById('q-hint').innerText = qData.hint;
-        document.getElementById('q-target').innerText = qData.targetDisplay;
+        
+        const targetEl = document.getElementById('q-target');
+        targetEl.innerText = qData.targetDisplay;
+        
+        if (qData.isError) {
+             targetEl.style.color = "var(--danger)";
+             targetEl.style.fontSize = "16px";
+        } else {
+             targetEl.style.color = "var(--primary)";
+             targetEl.style.fontSize = "22px";
+        }
         
         // Save reveal data on elements for showAnswer()
-        document.getElementById('q-target').dataset.reveal = qData.targetReveal;
+        targetEl.dataset.reveal = qData.targetReveal;
         document.getElementById('q-full-phrase').dataset.full = qData.fullPhrase || "";
         document.getElementById('q-full-phrase').dataset.hide = qData.fullDisplayHide;
 
         document.getElementById('answer-area').classList.remove('visible');
         document.getElementById('btn-show-answer').style.display = 'block';
         document.getElementById('q-full-phrase').style.display = 'none';
-        document.getElementById('q-target').style.color = "var(--primary)";
     }
 
     function showAnswer() {
@@ -947,6 +1007,7 @@
         
         targetEl.innerText = targetEl.dataset.reveal;
         targetEl.style.color = "var(--text-main)";
+        targetEl.style.fontSize = "22px"; // Reset in case it was shrunk by error state
         
         if (fullEl.dataset.hide === "false" && fullEl.dataset.full) {
             fullEl.innerText = fullEl.dataset.full;
@@ -969,7 +1030,6 @@
             dbItem.streak = 0;
             dbItem.status = 'LEARNING';
             nextIntervalDays = 1;
-            // Push to end to review again
             if(currentSession.queue.length - currentSession.currentIndex > 2) {
                  currentSession.queue.push(item);
             }
@@ -1002,7 +1062,6 @@
 
     function finishSession() {
         if (currentSession.mode === 'RP_PREP') {
-            // V2: RP Targets locked
             rpSession = {
                 state: 'TARGETS_LOCKED',
                 targets: currentSession.queue.slice(0, 5).map(i => i.id)
@@ -1030,7 +1089,6 @@
     // ==================== V2 ROLE-PLAY LOGIC ====================
 
     function startRPPrep() {
-        // Selection Logic for RP Targets (5 items)
         let pool = db.filter(i => true);
         pool.forEach(i => {
             let score = 0;
@@ -1043,7 +1101,7 @@
             if(i.wrongCount > 0 && (Date.now() - i.lastReviewed < 2*MS_PER_DAY)) score += 45;
             if(isDue(i)) score += 20;
 
-            score += Math.random() * 15; // randomization
+            score += Math.random() * 15;
             i._rpScore = score;
         });
         pool.sort((a, b) => b._rpScore - a._rpScore);
@@ -1152,12 +1210,11 @@
             if(!dbItem) return;
             
             let res = rpResultsFormState[id];
-            if(res === 'NONE') return; // NOT NEEDED
+            if(res === 'NONE') return;
 
             dbItem.roleplayAttempts++;
             dbItem.lastRoleplayDate = Date.now();
             
-            // Map our UI value to DB value string
             const dbValStr = res === 'NATURAL' ? 'USED NATURALLY' : 
                              res === 'DIFFICULTY' ? 'USED WITH DIFFICULTY' : 'COULDN\'T USE';
                              
@@ -1166,19 +1223,16 @@
 
             if (res === 'NATURAL') {
                 dbItem.roleplaySuccessCount++;
-                // If quiz stats are solid, allow Mastered evaluation logic. 
-                // Wait, requirements say: Mastered requires Quiz multiple Greens + RP USED NATURALLY at least 1.
-                // It's handled gracefully since quiz logic promotes to MASTERED, and UI shows badge if RP verified.
                 if (dbItem.correctCount > dbItem.wrongCount && dbItem.status !== 'MASTERED' && dbItem.status !== 'NEW') {
                     dbItem.status = 'REVIEW';
                 }
             } else if (res === 'DIFFICULTY') {
                 dbItem.roleplayDifficultyCount++;
-                dbItem.nextReview = Date.now() + 1*MS_PER_DAY; // Sooner
+                dbItem.nextReview = Date.now() + 1*MS_PER_DAY;
                 if(dbItem.status === 'MASTERED') dbItem.status = 'REVIEW';
             } else if (res === 'FAILED') {
                 dbItem.roleplayFailedCount++;
-                dbItem.nextReview = Date.now(); // Immediate tomorrow
+                dbItem.nextReview = Date.now();
                 if(dbItem.status === 'MASTERED') dbItem.status = 'REVIEW';
             }
         });
@@ -1206,14 +1260,12 @@
     
     // --- Weekly RP Review ---
     function renderWeeklyRPReview() {
-        // Simple 7-day lookback
         const weekAgo = Date.now() - (7 * MS_PER_DAY);
         
         let attempts = 0; let success = 0; let diff = 0; let failed = 0;
         
         db.forEach(item => {
             if(!item.roleplayHistory) return;
-            // Iterate history (naive string date parsing)
             item.roleplayHistory.forEach(h => {
                 let hTime = new Date(h.date).getTime();
                 if(hTime >= weekAgo) {
@@ -1237,7 +1289,6 @@
             ✅ Natural: ${success} | △ Difficulty: ${diff} | ❌ Failed: ${failed}
         `;
 
-        // Next Targets
         const container = document.getElementById('rp-next-targets-container');
         container.innerHTML = '';
         
@@ -1472,7 +1523,6 @@
                     priority: ['A','B','C'].includes(item.priority) ? item.priority : 'C',
                     status: 'NEW', createdDate: now, lastReviewed: null, nextReview: null,
                     correctCount: 0, wrongCount: 0, okCount: 0, streak: 0,
-                    // V2 Fields
                     roleplayAttempts: 0, roleplaySuccessCount: 0, roleplayDifficultyCount: 0,
                     roleplayFailedCount: 0, lastRoleplayDate: null, lastRoleplayResult: null, roleplayHistory: []
                 };
